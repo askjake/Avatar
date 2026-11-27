@@ -54,3 +54,10 @@ Use a photo of your own head instead of the cartoon face.
 - Place the mouth centre at the lip seam, beneath any visible upper teeth. The lower lip and nearby skin move with calibrated microphone loudness. Blinks use the original eyelid texture.
 - Motion is generated locally from one still image. It follows loudness and does not infer phonemes.
 - If the photo can't be loaded, AvatarCam falls back to the cartoon face.
+
+
+### Voice-driven expressions
+
+Photo portrait mode can smile or frown as you speak. Leave **Voice-driven expressions** checked in Settings and speak normally for a moment so the app can learn your usual pitch. A sustained higher pitch lifts the lip corners and cheeks. A lower pitch turns the corners down and raises the inner brows. Relative loudness adjusts the strength. Brief pauses carry the expression across consonants, and longer pauses relax it.
+
+This is a performance control driven by vocal delivery. A rising question can produce a smile even when the words sound serious. The app neither transcribes speech nor identifies your actual mood. Processing runs on your machine. Uncheck the setting for the previous portrait animation with speech and blinks only.

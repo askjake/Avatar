@@ -2,6 +2,8 @@
 import threading, time
 import numpy as np
 
+from voice_expression import VoiceExpression
+
 SAMPLE_RATE = 16000
 BLOCK_SIZE = 512
 
@@ -15,6 +17,8 @@ class AudioMonitor:
         self.sensitivity = sensitivity
         self.baseline = 0.0          # measured noise floor
         self._lock = threading.Lock()
+        self._expression = None
+        self._last_block = 0.0
         self._rms = 0.0
         self._level = 0
         self._cal = None             # list while calibrating
@@ -41,6 +45,10 @@ class AudioMonitor:
         block = indata[:, 0]
         rms = float(np.sqrt(np.mean(block ** 2)))
         with self._lock:
+            self._last_block = time.monotonic()
+            if self._expression is not None and self._cal is None:
+                gate = self.baseline + BASE_THRESHOLDS[0] * self.sensitivity
+                self._expression.update(block, SAMPLE_RATE, rms, gate)
             self._rms = rms
             if self._cal is not None:
                 self._cal.append(rms)
@@ -50,6 +58,17 @@ class AudioMonitor:
         """Returns (level 0-3, rms, listening). listening = quiet room sound (level 1)."""
         with self._lock:
             return self._level, self._rms, self._level == 1
+
+    def enable_expressions(self, enabled):
+        with self._lock:
+            self._expression = VoiceExpression() if enabled else None
+
+    def get_portrait_state(self):
+        with self._lock:
+            if time.monotonic() - self._last_block > 0.25:
+                return 0.0, 0.0
+            pose = self._expression.pose if self._expression else 0.0
+            return self.photo_level_for(self._rms), pose
 
     def start(self):
         import sounddevice as sd  # imported here so the module loads without audio hardware
@@ -75,6 +94,8 @@ class AudioMonitor:
         """Sample ambient noise (stay quiet!) and set the noise-floor baseline."""
         with self._lock:
             self._cal = []
+            if self._expression is not None:
+                self._expression = VoiceExpression()
         time.sleep(seconds)
         with self._lock:
             samples, self._cal = self._cal, None

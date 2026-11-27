@@ -103,6 +103,48 @@ class FeaturePatch:
         return self.sample(np.where(abs(dy) < self.ry, mapped, dy)).astype(np.uint8)
 
 
+class ExpressionWarp:
+    """Local vertical displacements in the eye-line coordinate system."""
+
+    def __init__(self, size, eyes, mouth, mouth_hw):
+        y, x = np.indices((size[1], size[0]), dtype=np.float32)
+        dx, dy = np.subtract(eyes[1], eyes[0])
+        span = max(1, math.hypot(dx, dy))
+        cosine, sine = dx / span, dy / span
+
+        def region(point, offset, radius):
+            # Compact smooth falloff leaves the cutout edge and untouched skin fixed.
+            xx, yy = x - point[0], y - point[1]
+            u = (xx * cosine + yy * sine - offset[0]) / radius[0]
+            v = (-xx * sine + yy * cosine - offset[1]) / radius[1]
+            return np.maximum(0, 1 - u*u - v*v) ** 2
+
+        smile = np.zeros_like(x)
+        frown = np.zeros_like(x)
+        for side, eye in zip((-1, 1), eyes):
+            corner = region(mouth, (side * mouth_hw * 0.9, 0), (mouth_hw * 0.85, span * 0.43))
+            cheek = region(eye, (side * span * 0.09, span * 0.24), (span * 0.38, span * 0.32))
+            brow = region(eye, (-side * span * 0.12, -span * 0.21), (span * 0.29, span * 0.18))
+            smile += span * (0.095 * corner + 0.043 * cheek)
+            frown += span * (-0.085 * corner + 0.055 * brow)
+        ys, xs = np.nonzero((smile != 0) | (frown != 0))
+        self.box = (xs.min(), ys.min(), xs.max()+1, ys.max()+1)
+        roi = np.s_[ys.min():ys.max()+1, xs.min():xs.max()+1]
+        self.fields = (frown[roi], smile[roi])
+        self.rows, self.cols = np.indices(self.fields[0].shape)
+
+    def apply(self, head, pose):
+        # Sample the already articulated frame so speech and blinks ride along.
+        pixels = np.asarray(head.crop(self.box))
+        field = self.fields[int(pose > 0)]
+        rows = np.clip(self.rows + abs(pose) * field, 0, pixels.shape[0] - 1)
+        low = rows.astype(np.intp)
+        frac = (rows - low).astype(np.float32)[..., None]
+        high = np.minimum(low + 1, pixels.shape[0] - 1)
+        blend = pixels[low, self.cols] * (1 - frac) + pixels[high, self.cols] * frac
+        head.paste(Image.fromarray(blend.astype(np.uint8)), self.box)
+
+
 class PhotoAvatarRenderer(AvatarRenderer):
     def __init__(self, cfg):
         self.load_error = None
@@ -153,12 +195,14 @@ class PhotoAvatarRenderer(AvatarRenderer):
                      for eye in (left_eye, right_eye)]
         self.lips = FeaturePatch(rgb, pt(prof["mouth"]), max(4, prof["mouth_hw"] * s),
                                  dist * 0.68, slope)
+        self.expression_warp = ExpressionWarp(head.size, (left_eye, right_eye), pt(prof["mouth"]),
+                                              max(4, prof["mouth_hw"] * s))
         self.load_error = None
 
     def head_missing(self):
         return self.load_error is not None or not hasattr(self, "head")
 
-    def render(self, level, listening=False):
+    def render(self, level, listening=False, expression=0.0):
         if self.head_missing():
             return super().render(level, listening)
         self._tick(level)
@@ -169,6 +213,8 @@ class PhotoAvatarRenderer(AvatarRenderer):
         if self.closure > 0.01:
             for patch in self.lids:
                 head.paste(Image.fromarray(patch.blink(self.closure)), (patch.x, patch.y))
+        if abs(expression) > 0.015:
+            self.expression_warp.apply(head, expression)
         head.putalpha(self.mask)
         if abs(self.tilt) > 0.05:
             head = head.rotate(self.tilt, resample=Image.BICUBIC)

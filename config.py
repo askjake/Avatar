@@ -15,6 +15,7 @@ DEFAULTS = {
     "mic_device": None,        # None = system default input
     "sensitivity": 1.0,        # threshold multiplier, 0.5 .. 2.0
     "style": "cartoon",        # "cartoon" (drawn face) or "photo" (cut-out of your own head)
+    "voice_expressions": True,
     "photo": "bike",           # which photo profile to use when style == "photo"
 }
 

@@ -91,16 +91,20 @@ def show_settings(cfg, start_label="Start AvatarCam"):
         row=6, column=1, sticky="w", **pad)
     ttk.Label(root, text="0.5 = very sensitive\n2.0 = needs louder voice", foreground="gray").grid(row=6, column=2, **pad)
 
+    expression_var = tk.BooleanVar(value=cfg.get("voice_expressions", True))
+    ttk.Checkbutton(root, text="Voice-driven expressions (photo portrait)", variable=expression_var).grid(
+        row=7, column=0, columnspan=3, sticky="w", **pad)
+
     def on_start():
         sel = labels.index(mic_var.get()) if mic_var.get() in labels else 0
         photo_key = pkeys[plabels.index(photo_var.get())] if photo_var.get() in plabels else cfg.get("photo", "bike")
         result.update(cfg)
-        result.update(name=name_var.get().strip(), skin=state["skin"], hair=state["hair"],
+        result.update(voice_expressions=expression_var.get(), name=name_var.get().strip(), skin=state["skin"], hair=state["hair"],
                       background=state["background"], mic_device=mics[sel][1], sensitivity=float(sens.get()),
                       style="photo" if style_var.get().startswith("Photo") else "cartoon", photo=photo_key)
         root.destroy()
 
-    ttk.Button(root, text=start_label, command=on_start).grid(row=7, column=0, columnspan=3, pady=12)
+    ttk.Button(root, text=start_label, command=on_start).grid(row=8, column=0, columnspan=3, pady=12)
     root.protocol("WM_DELETE_WINDOW", root.destroy)
     root.mainloop()
     return dict(result) if result else None

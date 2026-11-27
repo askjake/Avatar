@@ -12,18 +12,24 @@ class App:
     def __init__(self, cfg):
         self.cfg = cfg
         self.audio = AudioMonitor(cfg["mic_device"], cfg["sensitivity"])
-        self.renderer = make_renderer(cfg)
+        self.set_renderer(cfg)
         self.render_lock = threading.Lock()
         self.cam = None
         self.status = "Starting"
         self.icon = None
         self.settings_open = False
 
+    def set_renderer(self, cfg):
+        self.renderer = make_renderer(cfg)
+        self.audio.enable_expressions(isinstance(self.renderer, PhotoAvatarRenderer)
+                                      and cfg.get("voice_expressions", True))
+
     def frame(self):
-        level, rms, listening = self.audio.get_state()
         with self.render_lock:
             if isinstance(self.renderer, PhotoAvatarRenderer):
-                level = self.audio.photo_level_for(rms)
+                level, pose = self.audio.get_portrait_state()
+                return self.renderer.render(level, expression=pose)
+            level, _, listening = self.audio.get_state()
             return self.renderer.render(level, listening)
 
     def start(self):
@@ -49,7 +55,7 @@ class App:
                 self.cfg = new
                 config.save_config(new)
                 with self.render_lock:
-                    self.renderer = make_renderer(new)
+                    self.set_renderer(new)
                 self.audio.sensitivity = new["sensitivity"]
                 if new["mic_device"] != self.audio.device:
                     self.audio.device = new["mic_device"]

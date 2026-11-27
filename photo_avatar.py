@@ -1,23 +1,25 @@
 """photo_avatar.py - South Park-style paper cut-out puppet built from a photo of your head.
 
 How it works (all crude on purpose):
-  * An ellipse around your head is cut out of the photo (white paper border + drop shadow).
-  * The head is split at the mouth line into an UPPER part and a JAW flap.
-  * Louder audio -> the jaw drops further; the gap shows a dark mouth with a strip of teeth.
-  * Blink = a skin-coloured eyelid patch slides down over each eye.
-  * Idle = head bob, small wobbly tilt. Talking = head bounces a little.
+  * An ellipse around your head is cut out of the photo.
+  * The cut-out is split just under your teeth into an UPPER head and a detached JAW piece.
+  * Each piece is its own paper cut-out: white border + drop shadow. The jaw drops and swings
+    on a hinge as you get louder; the gap shows a dark mouth (tongue + a hint of teeth), and
+    the background shows through at the sides (no stretched pixels).
+  * Blink = skin-coloured eyelid patch slides down over each eye.
+  * Idle = head bob + wobbly tilt. Talking = head bounces a little.
 
 Your photos live in ./photos (git-ignored, never uploaded). Landmarks live in photos/profiles.json
 and can be re-placed with Settings > "Set up face...".
 """
-import json, math, os, random
+import json, math, os, random, time
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageChops
 from avatar_renderer import AvatarRenderer, W, H, _font, _lerp
 
 try:
     import cv2
-except Exception:  # opencv missing -> slower PIL fallback for the outline
+except Exception:  # opencv missing -> slower PIL fallback for outlines
     cv2 = None
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -26,25 +28,30 @@ PROFILES_PATH = os.path.join(PHOTO_DIR, "profiles.json")
 
 # ---------------- CONSTANTS YOU CAN TWEAK ----------------
 HEAD_PX = 390                       # head height on the 540px-tall frame
-JAW_OPEN_PX = [0, 9, 24, 42]        # jaw drop in pixels for mouth levels 0..3
+JAW_OPEN_PX = [0, 12, 28, 46]       # how far the jaw drops, mouth levels 0..3
+JAW_SWING_DEG = 0.07                # extra hinge swing per pixel of drop (looks "flappy")
+DETACH_MIN_PX = 3                   # below this the two pieces draw as one head (no seam)
 BORDER_PX = 6                       # white paper-cutout border
 SHADOW_OFFSET = (7, 9)
 SHADOW_ALPHA = 110
-MOUTH_DARK = (58, 14, 22)
+MOUTH_DARK = (46, 10, 18, 255)      # inside of the mouth
+TONGUE = (176, 62, 76, 255)
+TEETH = (246, 244, 236, 255)
 TILT_DEG = 3                        # random wobble amount
 BOUNCE_PX = 2.5                     # head bounce while talking
 HEAD_BOB_PX = 4
 # ---------------------------------------------------------
 
-# Default landmarks, in pixels of the 672x900 photo copies. Eyes / mouth / head outline ellipse.
+# Default landmarks, in pixels of the 672x900 photo copies (photos/head_*.jpg).
+# "mouth" = where the jaw is cut: just UNDER your teeth.
 DEFAULT_PROFILES = {
     "bike": {"label": "Dirt bike", "file": "photos/head_bike.jpg",
              "left_eye": [228, 470], "right_eye": [310, 470],
-             "mouth": [270, 556], "mouth_hw": 62,
+             "mouth": [268, 563], "mouth_hw": 56,
              "top": 350, "chin": 640, "left": 152, "right": 352},
     "beanie": {"label": "Beanie", "file": "photos/head_beanie.jpg",
                "left_eye": [222, 441], "right_eye": [328, 447],
-               "mouth": [272, 568], "mouth_hw": 68,
+               "mouth": [268, 574], "mouth_hw": 52,
                "top": 253, "chin": 678, "left": 135, "right": 432},
 }
 
@@ -66,9 +73,35 @@ def save_profiles(profiles):
         json.dump(profiles, f, indent=2)
 
 
+def _dilate(alpha, k):
+    if cv2 is not None:
+        return cv2.dilate(alpha, np.ones((k, k), np.uint8))
+    from PIL import ImageFilter
+    return np.asarray(Image.fromarray(alpha).filter(ImageFilter.MaxFilter(k)))
+
+
+def _blur(a):
+    if cv2 is not None:
+        return cv2.GaussianBlur(a, (0, 0), 4)
+    from PIL import ImageFilter
+    return np.asarray(Image.fromarray(a).filter(ImageFilter.GaussianBlur(4)))
+
+
+def _paper(layer):
+    """(shadow, white_border) RGBA layers for one cut-out piece."""
+    alpha = np.asarray(layer.split()[3])
+    border = _dilate(alpha, 2 * BORDER_PX + 1)
+    shadow = (_blur(border).astype(np.uint16) * SHADOW_ALPHA // 255).astype(np.uint8)
+    sh = Image.new("RGBA", layer.size, (0, 0, 0, 0)); sh.putalpha(Image.fromarray(shadow))
+    wh = Image.new("RGBA", layer.size, (255, 255, 255, 255)); wh.putalpha(Image.fromarray(border))
+    return sh, wh
+
+
 class PhotoAvatarRenderer(AvatarRenderer):
     def __init__(self, cfg):
         self.load_error = None
+        self.closure = 0.0
+        self.bob = 0.0
         super().__init__(cfg)           # sets timers, then calls set_config
 
     # ---------------------------------------------------- setup
@@ -86,7 +119,6 @@ class PhotoAvatarRenderer(AvatarRenderer):
             self.load_error = "photo not found: %s" % path
             print(self.load_error, e)
             return
-        # --- cut the head out with an ellipse mask
         l, r, t, c = prof["left"], prof["right"], prof["top"], prof["chin"]
         pad = 3
         x0, y0, x1, y1 = int(l) - pad, int(t) - pad, int(r) + pad, int(c) + pad
@@ -111,28 +143,20 @@ class PhotoAvatarRenderer(AvatarRenderer):
         self.eye_dist = math.hypot(self.eyes[1][0] - self.eyes[0][0], self.eyes[1][1] - self.eyes[0][1])
         self.upper = head.crop((0, 0, self.hw, self.cut))
         self.jaw = head.crop((0, self.cut, self.hw, self.hh))
-        self.strip = head.crop((0, self.cut - 2, self.hw, self.cut - 1))   # 1px row, stretched to fill the gap
-        # lid colour = average skin just under the eyes
         arr = np.asarray(head.convert("RGB"))
         cols = []
         for ex, ey in self.eyes:
             yy = int(ey + 0.30 * self.eye_dist); xx = int(ex)
             cols.append(arr[max(0, yy - 3):yy + 4, max(0, xx - 3):xx + 4].reshape(-1, 3).mean(axis=0))
         self.lid = tuple(int(v) for v in np.mean(cols, axis=0))
-        self.margin = BORDER_PX + 14
+        self.margin = BORDER_PX + 20
         self.load_error = None
 
-    # ---------------------------------------------------- per-frame
-    def render(self, level, listening=False):
-        if self.head_missing():
-            return super().render(level, listening)     # fall back to the cartoon face
-        t = self._tick(level, listening)
-        op = int(round(float(np.interp(self.mouth, [0, 1, 2, 3], JAW_OPEN_PX))))
-        M = self.margin
-        lw, lh = self.hw + 2 * M, self.hh + op + 2 * M
-        layer = Image.new("RGBA", (lw, lh), (0, 0, 0, 0))
+    def head_missing(self):
+        return not hasattr(self, "upper") or self.load_error is not None
 
-        # upper head + blinking eyelids
+    # ---------------------------------------------------- per-frame
+    def _upper_with_lids(self):
         up = self.upper.copy()
         if self.closure > 0.04:
             d = ImageDraw.Draw(up)
@@ -144,50 +168,74 @@ class PhotoAvatarRenderer(AvatarRenderer):
                 if self.closure > 0.5:
                     d.arc((ex - ew * 1.15, bottom - eh * 0.8, ex + ew * 1.15, bottom + 2), 20, 160,
                           fill=(45, 30, 25), width=3)
-        layer.paste(up, (M, M), up)
+        return up
 
-        # gap between upper head and jaw = stretched cheek pixels + dark mouth + teeth
-        if op > 0:
-            gap = self.strip.resize((self.hw, op), Image.NEAREST)
-            g = ImageDraw.Draw(gap)
-            g.ellipse((self.mcx - self.mhw * 0.95, -op * 0.7, self.mcx + self.mhw * 0.95, op * 1.7), fill=MOUTH_DARK)
-            th = min(op, max(3, int(op * 0.32)))
-            g.rectangle((self.mcx - self.mhw * 0.62, 0, self.mcx + self.mhw * 0.62, th), fill=(246, 244, 236))
-            layer.paste(gap, (M, M + self.cut), gap)
-        layer.paste(self.jaw, (M, M + self.cut + op), self.jaw)
+    def _mouth_layer(self, size, op):
+        """Dark mouth interior (tongue + a hint of teeth), clipped to a rounded shape between the pieces."""
+        M = self.margin
+        mw = max(self.mhw * 0.95, 20)
+        y0 = M + self.cut - 8
+        y1 = M + self.cut + op + 8
+        box = (M + self.mcx - mw, y0, M + self.mcx + mw, y1)
+        rad = max(2, min((y1 - y0) / 2.0, 26))
+        layer = Image.new("RGBA", size, (0, 0, 0, 0))
+        d = ImageDraw.Draw(layer)
+        d.rounded_rectangle(box, radius=rad, fill=MOUTH_DARK)
+        # tongue sits in the bottom of the mouth
+        d.ellipse((M + self.mcx - mw * 0.5, y1 - (op * 0.6 + 6), M + self.mcx + mw * 0.5, y1 + 14), fill=TONGUE)
+        # a hint of lower teeth riding on the jaw
+        th = min(7, max(2, op * 0.18))
+        d.rounded_rectangle((M + self.mcx - mw * 0.55, y1 - 8 - th, M + self.mcx + mw * 0.55, y1 - 8),
+                            radius=2, fill=TEETH) if op > 20 else None
+        clip = Image.new("L", size, 0)
+        ImageDraw.Draw(clip).rounded_rectangle(box, radius=rad, fill=255)
+        layer.putalpha(ImageChops.multiply(layer.split()[3], clip))
+        return layer
 
-        # paper border + shadow
-        alpha = np.asarray(layer.split()[3])
-        k = 2 * BORDER_PX + 1
-        if cv2 is not None:
-            border = cv2.dilate(alpha, np.ones((k, k), np.uint8))
-            shadow = cv2.GaussianBlur(border, (0, 0), 4)
-        else:  # pragma: no cover
-            from PIL import ImageFilter
-            im = Image.fromarray(alpha).filter(ImageFilter.MaxFilter(k))
-            border, shadow = np.asarray(im), np.asarray(im.filter(ImageFilter.GaussianBlur(4)))
-        out = Image.new("RGBA", (lw + SHADOW_OFFSET[0], lh + SHADOW_OFFSET[1]), (0, 0, 0, 0))
-        sh = Image.new("RGBA", (lw, lh), (0, 0, 0, 0)); sh.putalpha(Image.fromarray((shadow * SHADOW_ALPHA // 255).astype(np.uint8)))
-        wh = Image.new("RGBA", (lw, lh), (255, 255, 255, 255)); wh.putalpha(Image.fromarray(border))
-        out.alpha_composite(sh, SHADOW_OFFSET)
-        out.alpha_composite(wh)
-        out.alpha_composite(layer)
+    def render(self, level, listening=False):
+        if self.head_missing():
+            return super().render(level, listening)     # fall back to the cartoon face
+        self._tick(level, listening)
+        op = int(round(float(np.interp(self.mouth, [0, 1, 2, 3], JAW_OPEN_PX))))
+        M = self.margin
+        size = (self.hw + 2 * M + SHADOW_OFFSET[0], self.hh + op + 2 * M + SHADOW_OFFSET[1])
+        up = self._upper_with_lids()
+        up_layer = Image.new("RGBA", size, (0, 0, 0, 0)); up_layer.paste(up, (M, M), up)
+        jaw_layer = Image.new("RGBA", size, (0, 0, 0, 0)); jaw_layer.paste(self.jaw, (M, M + self.cut + op), self.jaw)
+        base = Image.new("RGBA", size, (0, 0, 0, 0))
+
+        if op < DETACH_MIN_PX:
+            # closed: one solid head, no seam
+            merged = up_layer.copy(); merged.alpha_composite(jaw_layer)
+            sh, wh = _paper(merged)
+            base.alpha_composite(sh, SHADOW_OFFSET); base.alpha_composite(wh); base.alpha_composite(merged)
+        else:
+            # open: two separate paper pieces, jaw swings on a hinge under the head
+            jaw_layer = jaw_layer.rotate(op * JAW_SWING_DEG, center=(M + self.hw / 2.0, M + self.cut + op),
+                                         resample=Image.BICUBIC)
+            pieces = [jaw_layer, up_layer]
+            borders = []
+            for lay in pieces:
+                sh, wh = _paper(lay)
+                base.alpha_composite(sh, SHADOW_OFFSET)
+                borders.append(wh)
+            for wh in borders:
+                base.alpha_composite(wh)
+            base.alpha_composite(self._mouth_layer(size, op))
+            base.alpha_composite(jaw_layer)
+            base.alpha_composite(up_layer)
+
         if abs(self.tilt) > 0.05:
-            out = out.rotate(self.tilt, resample=Image.BICUBIC, expand=True)
-
+            base = base.rotate(self.tilt, resample=Image.BICUBIC, expand=True)
         img = self.bg.copy()
-        px = int(W / 2 - out.width / 2)
-        py = int(H / 2 - out.height / 2 + 6 + self.bob - self.mouth * BOUNCE_PX)
-        img.paste(out, (px, py), out)
+        px = int(W / 2 - base.width / 2)
+        py = int(H / 2 - base.height / 2 + 6 + self.bob - self.mouth * BOUNCE_PX)
+        img.paste(base, (px, py), base)
         self._badge(img)
         return np.asarray(img.convert("RGB"))
 
-    def head_missing(self):
-        return not hasattr(self, "upper") or self.load_error is not None
-
     def _tick(self, level, listening):
         """Advance mouth / blink / bob / tilt state (same timing rules as the cartoon face)."""
-        import time
         t = time.monotonic() - self.t0
         self.mouth = _lerp(self.mouth, float(level), 0.3)
         self.bob = math.sin(t * 2 * math.pi / 4.0) * HEAD_BOB_PX
@@ -195,8 +243,7 @@ class PhotoAvatarRenderer(AvatarRenderer):
             self.tilt_target = random.uniform(-TILT_DEG, TILT_DEG)
             self.next_tilt = t + random.uniform(8, 15)
         self.tilt = _lerp(self.tilt, self.tilt_target, 0.05)
-        # (tiny constant sway so it never looks frozen)
-        self.tilt += math.sin(t * 2 * math.pi / 5.0) * 0.15
+        self.tilt += math.sin(t * 2 * math.pi / 5.0) * 0.15      # tiny constant sway so it never looks frozen
         closure = 0.0
         if self.blink_start is None and t >= self.next_blink:
             self.blink_start = t

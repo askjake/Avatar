@@ -34,9 +34,9 @@ def show_settings(cfg, start_label="Start AvatarCam"):
     except Exception:
         pa, profiles = None, {}
     ttk.Label(root, text="Avatar style:").grid(row=1, column=0, sticky="w", **pad)
-    style_var = tk.StringVar(value="Photo cut-out" if cfg.get("style") == "photo" else "Cartoon")
+    style_var = tk.StringVar(value="Photo portrait" if cfg.get("style") == "photo" else "Cartoon")
     style_frame = ttk.Frame(root); style_frame.grid(row=1, column=1, columnspan=2, sticky="w", **pad)
-    ttk.Combobox(style_frame, textvariable=style_var, values=["Cartoon", "Photo cut-out"],
+    ttk.Combobox(style_frame, textvariable=style_var, values=["Cartoon", "Photo portrait"],
                  state="readonly", width=14).pack(side="left")
     pkeys = list(profiles.keys())
     plabels = [profiles[k].get("label", k) for k in pkeys]

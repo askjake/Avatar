@@ -32,6 +32,11 @@ class AudioMonitor:
             return 2
         return 3
 
+    def photo_level_for(self, rms):
+        """Continuous jaw target on the same calibrated 0..3 scale."""
+        thresholds = [self.baseline + t * self.sensitivity for t in BASE_THRESHOLDS]
+        return float(np.interp(rms, thresholds, (0.0, 1.4, 3.0)))
+
     def _callback(self, indata, frames, time_info, status):
         block = indata[:, 0]
         rms = float(np.sqrt(np.mean(block ** 2)))

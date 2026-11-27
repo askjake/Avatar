@@ -1,7 +1,7 @@
 """face_setup.py - tiny tkinter window to place the face landmarks on a photo (a few clicks).
 
 Opened from Settings > "Set up face...". Defaults are already filled in, so you only need this if the
-jaw split / eyes / head outline look off. Landmarks are saved to photos/profiles.json.
+lip seam / eyes / head outline look off. Landmarks are saved to photos/profiles.json.
 """
 import tkinter as tk
 from tkinter import ttk
@@ -14,7 +14,7 @@ MAX_W, MAX_H = 520, 680
 STEPS = [
     ("left_eye", "Click the CENTRE of the eye on the LEFT of the photo"),
     ("right_eye", "Click the CENTRE of the eye on the RIGHT of the photo"),
-    ("mouth", "Click the middle of your mouth where the jaw should split (just under the mustache / top teeth)"),
+    ("mouth", "Click the middle of your mouth at the lip seam (just below any visible upper teeth)"),
     ("mouth_r", "Click the RIGHT corner of your mouth (sets mouth width)"),
     ("chin", "Click the very bottom of your chin"),
     ("top", "Click the very top of your head (or hat)"),
@@ -97,7 +97,7 @@ def open_setup(parent, key="bike"):
             p["chin"], p["top"] = c["chin"][1], c["top"][1]
             p["left"], p["right"] = c["left"][0], c["right"][0]
             state["step"] = None
-            prompt.set("Done. Check the white ellipse (head), green circles (eyes) and red line (jaw split). Save, or Redo.")
+            prompt.set("Done. Check the white ellipse (head), green circles (eyes) and red line (lip seam). Save, or Redo.")
         else:
             next_prompt()
         draw()

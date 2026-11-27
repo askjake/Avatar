@@ -2,7 +2,7 @@
 import threading
 import config
 from audio_monitor import AudioMonitor
-from photo_avatar import make_renderer
+from photo_avatar import PhotoAvatarRenderer, make_renderer
 from virtual_cam import VirtualCam
 from settings_ui import show_settings
 from tray import build_tray
@@ -20,8 +20,10 @@ class App:
         self.settings_open = False
 
     def frame(self):
-        level, _rms, listening = self.audio.get_state()
+        level, rms, listening = self.audio.get_state()
         with self.render_lock:
+            if isinstance(self.renderer, PhotoAvatarRenderer):
+                level = self.audio.photo_level_for(rms)
             return self.renderer.render(level, listening)
 
     def start(self):

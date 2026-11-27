@@ -46,11 +46,11 @@ Stay quiet for the first second while it calibrates.
 
 Having trouble? See [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
-## Photo cut-out avatar (South Park style)
+## Animated photo portrait
 Use a photo of your own head instead of the cartoon face.
 1. Put head photos in the `photos/` folder (they are git-ignored and never leave your machine). Two defaults are wired up: `head_bike.jpg` and `head_beanie.jpg`.
-2. Tray icon > **Settings...** > **Avatar style: Photo cut-out**, pick a photo, **Save**.
-3. If the jaw split, eyes or head outline look off: Settings > **Set up face...** and click the 8 prompted points (about 30 seconds).
-- Louder voice = jaw drops further, showing a dark mouth and teeth. Blink = skin-coloured eyelids. Idle = bob and wobble.
-- Look and feel constants (head size, jaw travel, border, shadow) are at the top of `photo_avatar.py`.
+2. Tray icon > **Settings...** > **Avatar style: Photo portrait**, pick a photo, **Save**.
+3. If the lip seam, eyes or head outline look off: Settings > **Set up face...** and click the 8 prompted points (about 30 seconds).
+- Place the mouth centre at the lip seam, beneath any visible upper teeth. The lower lip and nearby skin move with calibrated microphone loudness. Blinks use the original eyelid texture.
+- Motion is generated locally from one still image. It follows loudness and does not infer phonemes.
 - If the photo can't be loaded, AvatarCam falls back to the cartoon face.

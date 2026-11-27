@@ -1,6 +1,7 @@
-opencv-python
+opencv-contrib-python
 numpy
 sounddevice
 pyvirtualcam
 Pillow
 pystray
+mediapipe==0.10.21; python_version >= "3.9" and python_version < "3.13"

@@ -61,3 +61,9 @@ Use a photo of your own head instead of the cartoon face.
 Photo portrait mode can smile or frown as you speak. Leave **Voice-driven expressions** checked in Settings and speak normally for a moment so the app can learn your usual pitch. A sustained higher pitch lifts the lip corners and cheeks. A lower pitch turns the corners down and raises the inner brows. Relative loudness adjusts the strength. Brief pauses carry the expression across consonants, and longer pauses relax it.
 
 This is a performance control driven by vocal delivery. A rising question can produce a smile even when the words sound serious. The app neither transcribes speech nor identifies your actual mood. Processing runs on your machine. Uncheck the setting for the previous portrait animation with speech and blinks only.
+
+### Map a photo and preview expressions
+
+Use Settings → Import photo on Python 3.9–3.12 to select a single-face photo. Keep the original file at its selected path. MediaPipe runs locally during setup. Check the cyan eyelid outlines, red lip seam and head crop, drag an eye or the mouth center to shift its outline if needed, then save. Existing profiles can use Set up face → Auto-map. Redo clicks replaces the automatic contours with the original manual center-point rig. The head crop is an estimate and can clip tall hats.
+
+Choose a named Portrait expression to preview happiness, sadness, anger, fear, surprise or disgust while speech and blinks continue. Voice selects the pitch-driven smile/frown behavior. Neutral disables expression deformations.

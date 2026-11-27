@@ -8,6 +8,7 @@ import time
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
+from landmarks import open_photo
 from avatar_renderer import AvatarRenderer, W, H, _font
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -92,6 +93,17 @@ class FeaturePatch:
     def blink(self, closure):
         # Compress the visible eye into a narrowing slit while pulling the
         # actual upper and lower lid textures over it. Patch edges stay fixed.
+        if hasattr(self, "eye_edges"):
+            top, bottom = self.eye_edges
+            gap = np.maximum(bottom - top, 0)
+            upper = top + .72 * gap * closure
+            lower = bottom - .27 * gap * closure
+            dy = self.dy
+            above = -self.ry + (dy+self.ry)*(top+self.ry)/np.maximum(.01, upper+self.ry)
+            below = self.ry - (self.ry-dy)*(self.ry-bottom)/np.maximum(.01, self.ry-lower)
+            slit = top + (dy-upper)*gap/np.maximum(.01,lower-upper)
+            mapped = np.where(dy < upper, above, np.where(dy > lower, below, slit))
+            return self.sample(np.where((gap > .1) & (abs(dy)<self.ry), mapped, dy)).astype(np.uint8)
         radius = self.ry * 0.49
         upper = -radius + 1.48 * radius * closure * self.lid_weight
         lower = radius - 0.49 * radius * closure * self.lid_weight
@@ -127,16 +139,28 @@ class ExpressionWarp:
             brow = region(eye, (-side * span * 0.12, -span * 0.21), (span * 0.29, span * 0.18))
             smile += span * (0.095 * corner + 0.043 * cheek)
             frown += span * (-0.085 * corner + 0.055 * brow)
-        ys, xs = np.nonzero((smile != 0) | (frown != 0))
+        fields = {"Happiness": smile, "Sadness": frown}
+        brows = np.zeros_like(x)
+        inner = np.zeros_like(x)
+        nose = region(mouth, (0, -span*.32), (span*.37, span*.29))
+        for side, eye in zip((-1, 1), eyes):
+            brows += region(eye, (0,-span*.22), (span*.36,span*.22))
+            inner += region(eye, (-side*span*.15,-span*.19), (span*.25,span*.19))
+        fields.update(Anger=-span*.09*inner+.3*frown,
+                      Fear=span*.065*(inner+.4*brows)+.45*frown,
+                      Surprise=span*.115*brows,
+                      Disgust=span*.09*nose-span*.045*inner+.22*frown)
+        ys, xs = np.nonzero(np.any(list(fields.values()), axis=0))
         self.box = (xs.min(), ys.min(), xs.max()+1, ys.max()+1)
         roi = np.s_[ys.min():ys.max()+1, xs.min():xs.max()+1]
+        self.named = {key: field[roi] for key, field in fields.items()}
         self.fields = (frown[roi], smile[roi])
         self.rows, self.cols = np.indices(self.fields[0].shape)
 
-    def apply(self, head, pose):
+    def apply(self, head, pose, name=None):
         # Sample the already articulated frame so speech and blinks ride along.
         pixels = np.asarray(head.crop(self.box))
-        field = self.fields[int(pose > 0)]
+        field = self.named[name] if name else self.fields[int(pose > 0)]
         rows = np.clip(self.rows + abs(pose) * field, 0, pixels.shape[0] - 1)
         low = rows.astype(np.intp)
         frac = (rows - low).astype(np.float32)[..., None]
@@ -156,6 +180,7 @@ class PhotoAvatarRenderer(AvatarRenderer):
     # ---------------------------------------------------- setup
     def set_config(self, cfg):
         super().set_config(cfg)
+        self.pose = cfg.get("portrait_pose", "Voice")
         self._load_head(cfg.get("photo", "bike"))
 
     def _load_head(self, key):
@@ -163,7 +188,7 @@ class PhotoAvatarRenderer(AvatarRenderer):
         prof = profiles.get(key) or next(iter(profiles.values()))
         path = os.path.join(HERE, prof["file"])
         try:
-            img = Image.open(path).convert("RGB")
+            img = open_photo(path, prof.get("oriented", False))
         except OSError as e:
             self.load_error = "photo not found: %s" % path
             print(self.load_error, e)
@@ -195,6 +220,25 @@ class PhotoAvatarRenderer(AvatarRenderer):
                      for eye in (left_eye, right_eye)]
         self.lips = FeaturePatch(rgb, pt(prof["mouth"]), max(4, prof["mouth_hw"] * s),
                                  dist * 0.68, slope)
+        if prof.get("eyelids"):
+            self.lids = []
+            for ring in prof["eyelids"]:
+                a, upper, b, lower = map(pt, ring)
+                a, b = sorted((a, b))
+                center = ((a[0]+b[0])/2, (upper[1]+lower[1])/2)
+                patch = FeaturePatch(rgb, center, (b[0]-a[0])*.65, dist*.22, 0)
+                x = patch.cols + patch.x
+                def lid_curve(mid):
+                    knots = sorted((a, mid, b))
+                    return np.interp(x, *zip(*knots)) - center[1]
+                patch.eye_edges = (lid_curve(upper), lid_curve(lower))
+                self.lids.append(patch)
+        if prof.get("lip_seam"):
+            patch = self.lips
+            curve = sorted(pt(p) for p in prof["lip_seam"])
+            seam = np.interp(patch.cols + patch.x, *zip(*curve)) - patch.y
+            patch.dy += patch.center - seam
+            patch.center = seam
         self.expression_warp = ExpressionWarp(head.size, (left_eye, right_eye), pt(prof["mouth"]),
                                               max(4, prof["mouth_hw"] * s))
         self.load_error = None
@@ -207,13 +251,20 @@ class PhotoAvatarRenderer(AvatarRenderer):
             return super().render(level, listening)
         self._tick(level)
         head = self.head.copy()
-        if self.mouth > 0.01:
+        named = self.pose in self.expression_warp.named
+        jaw = max(self.mouth / 3, {"Surprise": .86, "Fear": .32}.get(self.pose, 0))
+        closure = self.closure
+        if self.pose in ("Disgust", "Anger"):
+            closure = max(closure, .30 if self.pose == "Disgust" else .18)
+        if jaw > 0.003:
             patch = self.lips
-            head.paste(Image.fromarray(patch.mouth(self.mouth / 3)), (patch.x, patch.y))
-        if self.closure > 0.01:
+            head.paste(Image.fromarray(patch.mouth(jaw)), (patch.x, patch.y))
+        if closure > 0.01:
             for patch in self.lids:
-                head.paste(Image.fromarray(patch.blink(self.closure)), (patch.x, patch.y))
-        if abs(expression) > 0.015:
+                head.paste(Image.fromarray(patch.blink(closure)), (patch.x, patch.y))
+        if named:
+            self.expression_warp.apply(head, 1, self.pose)
+        elif self.pose == "Voice" and abs(expression) > 0.015:
             self.expression_warp.apply(head, expression)
         head.putalpha(self.mask)
         if abs(self.tilt) > 0.05:

@@ -1,6 +1,9 @@
 """settings_ui.py - small tkinter settings window."""
 import tkinter as tk
-from tkinter import ttk, colorchooser
+from tkinter import ttk, colorchooser, filedialog, messagebox
+from pathlib import Path
+import uuid
+from landmarks import detect, open_photo
 from config import SKIN_PRESETS, HAIR_PRESETS
 
 
@@ -45,6 +48,31 @@ def show_settings(cfg, start_label="Start AvatarCam"):
     photo_box = ttk.Combobox(style_frame, textvariable=photo_var, values=plabels, state="readonly", width=12)
     photo_box.pack(side="left", padx=6)
 
+    def import_photo():
+        path = filedialog.askopenfilename(parent=root, filetypes=[("Photos","*.jpg *.jpeg *.png *.webp")])
+        if not path:
+            return
+        try:
+            profile = detect(open_photo(path, True))
+            key = uuid.uuid4().hex
+            label = Path(path).stem
+            if label in plabels:
+                label += " " + key[:5]
+            profile.update(file=path, label=label, oriented=True)
+            current = pa.load_profiles()
+            current[key] = profile
+            pa.save_profiles(current)
+        except (OSError, RuntimeError, ValueError) as exc:
+            messagebox.showerror("Import photo", str(exc), parent=root)
+            return
+        pkeys.append(key)
+        plabels.append(label)
+        photo_box.configure(values=plabels)
+        photo_var.set(label)
+        style_var.set("Photo portrait")
+        do_face_setup()
+
+    ttk.Button(style_frame, text="Import photo", command=import_photo).pack(side="left")
     def do_face_setup():
         if pa is None or not pkeys:
             return
@@ -95,16 +123,22 @@ def show_settings(cfg, start_label="Start AvatarCam"):
     ttk.Checkbutton(root, text="Voice-driven expressions (photo portrait)", variable=expression_var).grid(
         row=7, column=0, columnspan=3, sticky="w", **pad)
 
+    ttk.Label(root, text="Portrait expression:").grid(row=8, column=0, sticky="w", **pad)
+    pose = tk.StringVar(value=cfg.get("portrait_pose", "Voice"))
+    ttk.Combobox(root, textvariable=pose, state="readonly",
+                 values=("Voice","Neutral","Happiness","Sadness","Anger","Fear","Surprise","Disgust")).grid(
+                     row=8,column=1,sticky="w",**pad)
+
     def on_start():
         sel = labels.index(mic_var.get()) if mic_var.get() in labels else 0
         photo_key = pkeys[plabels.index(photo_var.get())] if photo_var.get() in plabels else cfg.get("photo", "bike")
         result.update(cfg)
-        result.update(voice_expressions=expression_var.get(), name=name_var.get().strip(), skin=state["skin"], hair=state["hair"],
+        result.update(portrait_pose=pose.get(), voice_expressions=expression_var.get(), name=name_var.get().strip(), skin=state["skin"], hair=state["hair"],
                       background=state["background"], mic_device=mics[sel][1], sensitivity=float(sens.get()),
                       style="photo" if style_var.get().startswith("Photo") else "cartoon", photo=photo_key)
         root.destroy()
 
-    ttk.Button(root, text=start_label, command=on_start).grid(row=8, column=0, columnspan=3, pady=12)
+    ttk.Button(root, text=start_label, command=on_start).grid(row=9, column=0, columnspan=3, pady=12)
     root.protocol("WM_DELETE_WINDOW", root.destroy)
     root.mainloop()
     return dict(result) if result else None

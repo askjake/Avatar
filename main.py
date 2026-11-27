@@ -2,7 +2,7 @@
 import threading
 import config
 from audio_monitor import AudioMonitor
-from avatar_renderer import AvatarRenderer
+from photo_avatar import make_renderer
 from virtual_cam import VirtualCam
 from settings_ui import show_settings
 from tray import build_tray
@@ -12,7 +12,7 @@ class App:
     def __init__(self, cfg):
         self.cfg = cfg
         self.audio = AudioMonitor(cfg["mic_device"], cfg["sensitivity"])
-        self.renderer = AvatarRenderer(cfg)
+        self.renderer = make_renderer(cfg)
         self.render_lock = threading.Lock()
         self.cam = None
         self.status = "Starting"
@@ -47,7 +47,7 @@ class App:
                 self.cfg = new
                 config.save_config(new)
                 with self.render_lock:
-                    self.renderer.set_config(new)
+                    self.renderer = make_renderer(new)
                 self.audio.sensitivity = new["sensitivity"]
                 if new["mic_device"] != self.audio.device:
                     self.audio.device = new["mic_device"]

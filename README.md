@@ -1,29 +1,47 @@
 # AvatarCam
 
-A cartoon avatar that lip-syncs to your microphone and shows up as a webcam in Google Meet. No real webcam, no cloud, no API keys.
+A cartoon avatar that lip-syncs to your microphone and appears as a webcam in Google Meet.
+Offline, no API keys, **no admin rights needed**.
 
-## Setup
-1. **Install OBS Studio** (one-time, free): https://obsproject.com. This provides the virtual camera driver.
-   Open OBS once and click *Start Virtual Camera* (or Tools > Virtual Camera) so the driver registers. OBS does not need to stay open afterwards.
-2. Install **Python 3.11+** (tick "Add python.exe to PATH").
-3. **Double-click `start_avatarcam.bat`**. It installs the dependencies on first run.
-   (Optional: right-click `create_shortcut.ps1` > Run with PowerShell for a desktop shortcut with the face icon.)
-4. In the settings window pick your name, skin, hair, background and microphone, then click **Start AvatarCam**.
-   Stay quiet for the first second: it measures your room's noise floor.
-5. In **Google Meet > Settings > Video**, choose **OBS Virtual Camera**.
-6. You're live. The avatar breathes, blinks and looks around when quiet, and lip-syncs when you talk.
-7. To stop: right-click the tray icon (near the clock) > **Quit**.
+## First-run setup (Windows 10/11, no admin)
+
+**1. Check Python (3.11+).** In PowerShell: `python --version`. If missing: `winget install Python.Python.3.13 --scope user`.
+
+**2. Install OBS Studio in user space** (it only provides the virtual camera driver):
+```
+winget install --id OBSProject.OBSStudio --scope user --silent --accept-package-agreements --accept-source-agreements
+```
+
+**3. Register the camera driver for your user (no admin).** The normal OBS installer and `regsvr32` need admin, so use the included script:
+```
+powershell -ExecutionPolicy Bypass -File register_camera_user.ps1
+```
+It should print `OK: DllRegisterServer succeeded`. You only do this once. (Undo with `-Unregister`.)
+
+**4. Fully restart Chrome** (close all windows and check the tray). Chrome only scans cameras when it starts.
+
+**5. Launch.** Double-click `start_avatarcam.bat` (installs dependencies on first run), or run `python main.py`.
+Do not press Ctrl+C to stop it; use the tray's Quit. Run only one copy at a time.
+Optional: right-click `create_shortcut.ps1` > Run with PowerShell for a Desktop shortcut.
+
+**6. Settings window (first launch).** Enter your name, pick colors, and **choose your microphone explicitly**
+(not "System default" unless that is your real mic), then click **Start AvatarCam**.
+Stay quiet for the first second while it calibrates.
+
+**7. Google Meet.** Join or start a meeting, turn your camera **on**, then open the camera dropdown
+(or Settings > Video) and choose **OBS Virtual Camera**.
+
+**8. Stop.** Right-click the tray icon (check the `^` overflow near the clock) > **Quit**.
 
 ## Tray menu
-- **Settings...** change look/mic any time (applies live)
-- **Recalibrate Mic** re-measure the noise floor (be quiet for 1 second)
+- **Settings...** change look or mic at any time (applies live)
+- **Recalibrate Mic** re-measure room noise (be quiet for 1 second)
+- **Quit**
 
 ## Tweaking
 - Colors, sizes, blink timing, bob and mouth heights: constants at the top of `avatar_renderer.py`
 - RMS thresholds: `BASE_THRESHOLDS` in `audio_monitor.py`
-- Mouth reacts too much or too little? Use the *Threshold scale* slider (lower = more sensitive).
+- Frame rate: `FPS` in `virtual_cam.py`
+- Output is 960x540 (16:9) so Meet doesn't crop the head.
 
-## Troubleshooting
-- *Camera error in tray*: OBS Virtual Camera isn't installed or is in use by OBS. Close OBS's own virtual camera.
-- *Mouth never moves*: pick the right microphone in Settings, or lower the threshold scale.
-- Settings are stored in `avatarcam_settings.json`; delete it to see the first-launch window again.
+Having trouble? See [TROUBLESHOOTING.md](TROUBLESHOOTING.md).

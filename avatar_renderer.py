@@ -7,7 +7,10 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 # ---------------- CONSTANTS YOU CAN TWEAK ----------------
-W, H = 640, 480
+# Scene is drawn at 640x480, then centred on a 16:9 canvas so Google Meet's 16:9 tile doesn't crop the head.
+SCENE_W, SCENE_H = 640, 480
+W, H = 960, 540                      # output frame size (16:9)
+OFF_X, OFF_Y = (W - SCENE_W) // 2, (H - SCENE_H) // 2
 HEAD_RX, HEAD_RY = 130, 150          # head half-width / half-height
 HEAD_CENTER = (320, 225)
 EYE_DX, EYE_DY = 55, -20             # eye offset from head centre
@@ -99,7 +102,7 @@ class AvatarRenderer:
                 self.next_blink = t + random.uniform(*BLINK_INTERVAL)
 
         # ---- drawing (back to front) ----
-        face = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        face = Image.new("RGBA", (SCENE_W, SCENE_H), (0, 0, 0, 0))
         d = ImageDraw.Draw(face)
         cx, cy = HEAD_CENTER[0], HEAD_CENTER[1] + bob
         skin, hair = self.skin, self.hair
@@ -154,7 +157,8 @@ class AvatarRenderer:
             d.rectangle((cx - w * 0.28, top + 3, cx + w * 0.28, top + 3 + th), fill="white")
 
         face = face.rotate(self.tilt, center=(cx, 300), resample=Image.BILINEAR)
-        img = Image.alpha_composite(self.bg, face)
+        img = self.bg.copy()
+        img.alpha_composite(face, (OFF_X, OFF_Y))
 
         # name badge
         if self.name:
